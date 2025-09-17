@@ -51,6 +51,7 @@ from vllm_ascend.utils import (check_kv_cache_bytes_cache_exist,
                                read_kv_cache_bytes_from_file,
                                sleep_mode_enabled, try_register_lib)
 from vllm_ascend.worker.model_runner_v1 import NPUModelRunner
+from ucm.integration.vllm.ucm_sparse.state import ensure_ucm_sparse_initialized
 
 
 class NPUWorker(WorkerBase):
@@ -336,6 +337,7 @@ class NPUWorker(WorkerBase):
             parallel_config.world_size_across_dp,
         )
         ensure_kv_transfer_initialized(self.vllm_config)
+        ensure_ucm_sparse_initialized(self.vllm_config)
 
     def _init_profiler(self):
         # Torch profiler. Enabled and configured through env vars:
