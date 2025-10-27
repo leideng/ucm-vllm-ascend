@@ -216,7 +216,7 @@ jobs:
           echo "SAFE_VLLM_ASCEND_VERSION=$SAFE_VLLM_ASCEND_VERSION" >> "$GITHUB_ENV"
 
       - name: Upload Report 
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: "report-${{ env.SAFE_VLLM_ASCEND_VERSION }}-${{ steps.report.outputs.markdown_name }}"
           path: ./benchmarks/accuracy/${{ steps.report.outputs.markdown_name }}.md
