@@ -37,7 +37,7 @@ from vllm_ascend.utils import (ACL_FORMAT_FRACTAL_NZ, aligned_16, is_310p,
                                nd_to_nz_2d, nd_to_nz_spec)
 
 from ucm.sparse.state import get_ucm_sparse, has_ucm_sparse
-
+import os
 
 class AscendAttentionBackend(AttentionBackend):
     accept_output_buffer: bool = True
@@ -132,8 +132,9 @@ class AscendMetadata:
     # the computed tokens + new tokens None if it is a decoding.
     query_start_loc: torch.Tensor
     query_lens: torch.Tensor
+    query_lens_device: torch.Tensor # (ldeng) added for KVComp
     seq_lens: torch.Tensor
-
+    seq_lens_device: torch.Tensor # (ldeng) added for KVComp
     # max value of number of tokens across dp group
     max_num_tokens_across_dp: int = 0
 
@@ -182,14 +183,21 @@ class AscendAttentionMetadataBuilder:
             block_table[:num_reqs])
 
         query_lens = self.runner.query_lens
+        query_lens_device = query_lens.pin_memory().to(self.runner.device, non_blocking=True)
         seq_lens = self.runner.seq_lens_cpu[:num_reqs]
+        seq_lens_device = seq_lens.pin_memory().to(self.runner.device, non_blocking=True)
         slot_mapping = self.runner.slot_mapping_cpu[:num_actual_tokens].to(
             self.runner.device, non_blocking=True)
         attn_mask = self.runner.attn_mask
         attn_state = self.runner.attn_state
         query_start_loc_cpu = self.runner.query_start_loc_cpu[:num_reqs + 1]
-        query_start_loc = query_start_loc_cpu.to(self.runner.device,
+        query_start_loc = query_start_loc_cpu.pin_memory().to(self.runner.device,
                                                  non_blocking=True)
+
+        if has_ucm_sparse():
+            ucm_sparse = get_ucm_sparse()
+            if os.environ["VLLM_HASH_ATTENTION"] == "1":
+                ucm_sparse.build_decode_attention_meta_npu(query_lens, seq_lens, block_table)
 
         if is_310p():
             if attn_state == AscendAttentionState.PrefillNoCache:
@@ -206,7 +214,9 @@ class AscendAttentionMetadataBuilder:
             block_tables=block_table,
             query_start_loc=query_start_loc,
             query_lens=query_lens,
+            query_lens_device=query_lens_device,
             seq_lens=seq_lens,
+            seq_lens_device=seq_lens_device,
             max_query_len=max_query_len,
             slot_mapping=slot_mapping,
             attn_mask=attn_mask,
