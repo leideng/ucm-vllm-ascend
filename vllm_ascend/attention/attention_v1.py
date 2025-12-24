@@ -466,7 +466,12 @@ def unified_ascend_attention_with_output(
     self = forward_context.no_compile_layers[layer_name]
     kv_cache = self.kv_cache[forward_context.virtual_engine]
     if not self.use_mla:
-        maybe_execute_sparse_attention_begin(query, key, value, layer_name, forward_context)
+        if attn_metadata is not None:
+            if os.environ["VLLM_HASH_ATTENTION"] == "1":
+                kv_cache, k_hash = kv_cache
+            else:
+                k_hash = None
+            maybe_execute_sparse_attention_begin(query, key, value, layer_name, forward_context, output, k_hash=k_hash)
     self.impl.forward(self,
                       query,
                       key,
@@ -514,6 +519,11 @@ def maybe_execute_sparse_attention_begin(
         value: torch.Tensor,
         layer_name: str,
         forward_context: ForwardContext,
+        output: Optional[torch.Tensor] = None,
+        phase: Optional[str] = None,
+        k_hash: Optional[torch.Tensor] = None,
+        decode_ql_nope: Optional[torch.Tensor] = None,
+        decode_q_pe: Optional[torch.Tensor] = None,
 ):
     if not has_ucm_sparse():
         return
@@ -524,7 +534,7 @@ def maybe_execute_sparse_attention_begin(
     if attn_metadata is None:
         return
 
-    ucm_sparse.attention_begin(query, key, value, layer_name, forward_context)
+    ucm_sparse.attention_begin(query, key, value, layer_name, forward_context, output, phase, k_hash, decode_ql_nope, decode_q_pe)
 
 def maybe_execute_sparse_attention_finished(
         query: torch.Tensor,
