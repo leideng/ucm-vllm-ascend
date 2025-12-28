@@ -1165,7 +1165,7 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                         inputs_embeds=inputs_embeds,
                         **model_kwargs,
                     )
-                    finished_dumping = self.maybe_wait_for_kv_save()
+                    #finished_dumping = self.maybe_wait_for_kv_save()
                     self.maybe_execute_ucm_sparse_finished()
 
         use_spec_decode = len(
@@ -1595,7 +1595,7 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                 logprobs=logprobs_lists,
                 prompt_logprobs_dict=prompt_logprobs_dict,
                 pooler_output=[],
-                finished_dumping=finished_dumping
+                #finished_dumping=finished_dumping
             )
 
         durations = ProfileExecuteDuration().pop_captured_sync()

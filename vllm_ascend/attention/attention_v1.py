@@ -459,7 +459,7 @@ def unified_ascend_attention_with_output(
     output: torch.Tensor,
     layer_name: str,
 ) -> None:
-    wait_for_kv_layer_from_connector(layer_name)
+    # wait_for_kv_layer_from_connector(layer_name)
 
     forward_context: ForwardContext = get_forward_context()
     attn_metadata = forward_context.attn_metadata
@@ -482,7 +482,7 @@ def unified_ascend_attention_with_output(
                       trace_flag=False)
     if not self.use_mla:
         maybe_execute_sparse_attention_finished(query, key, value, output, layer_name, forward_context)
-    maybe_save_kv_layer_to_connector(layer_name, kv_cache)
+    # maybe_save_kv_layer_to_connector(layer_name, kv_cache)
     return
 
 def wait_for_kv_layer_from_connector(layer_name: str):
