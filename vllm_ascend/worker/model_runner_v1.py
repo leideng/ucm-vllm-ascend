@@ -1166,7 +1166,7 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                         **model_kwargs,
                     )
                     #finished_dumping = self.maybe_wait_for_kv_save()
-                    self.maybe_execute_ucm_sparse_finished()
+                    self.maybe_execute_ucm_sparse_finished(logits_indices)
 
         use_spec_decode = len(
             scheduler_output.scheduled_spec_decode_tokens) > 0
@@ -2438,11 +2438,11 @@ class NPUModelRunner(LoRAModelRunnerMixin):
         ucm_sparse.build_sparse_meta(scheduler_output, self.requests, self.input_batch, attn_metadata)
         ucm_sparse.execute_begin(scheduler_output)
 
-    def maybe_execute_ucm_sparse_finished(self):
+    def maybe_execute_ucm_sparse_finished(self, logits_indices):
         if not has_ucm_sparse():
-            return
+            return logits_indices
         ucm_sparse = get_ucm_sparse()
-        ucm_sparse.execute_finished()
+        return ucm_sparse.execute_finished(logits_indices)
 
     def ucm_sparse_request_finished_in_worker(self, request_id: str | int):
         if not has_ucm_sparse():
