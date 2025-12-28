@@ -465,13 +465,12 @@ def unified_ascend_attention_with_output(
     attn_metadata = forward_context.attn_metadata
     self = forward_context.no_compile_layers[layer_name]
     kv_cache = self.kv_cache[forward_context.virtual_engine]
-    if not self.use_mla:
-        if attn_metadata is not None:
-            if os.getenv("VLLM_HASH_ATTENTION", "0") == "1":
-                kv_cache, k_hash = kv_cache
-            else:
-                k_hash = None
-            maybe_execute_sparse_attention_begin(query, key, value, layer_name, forward_context, output, k_hash=k_hash)
+    if attn_metadata is not None:
+        if os.getenv("VLLM_HASH_ATTENTION", "0") == "1":
+            kv_cache, k_hash = kv_cache
+        else:
+            k_hash = None
+        maybe_execute_sparse_attention_begin(query, key, value, layer_name, forward_context, output, k_hash=k_hash)
     self.impl.forward(self,
                       query,
                       key,
@@ -480,8 +479,9 @@ def unified_ascend_attention_with_output(
                       attn_metadata,
                       output,
                       trace_flag=False)
-    if not self.use_mla:
-        maybe_execute_sparse_attention_finished(query, key, value, output, layer_name, forward_context)
+
+    if attn_metadata is not None:
+        maybe_execute_sparse_attention_finished(query, key, value, output, layer_name, forward_context, k_hash=k_hash)
     # maybe_save_kv_layer_to_connector(layer_name, kv_cache)
     return
 

@@ -1155,7 +1155,7 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                     assert self.model is not None
                     maybe_converting_weight_acl_format(self.model,
                                                        ACL_FORMAT_FRACTAL_ND)
-                    self.maybe_setup_kv_connector(scheduler_output)
+                    #self.maybe_setup_kv_connector(scheduler_output)
                     self.maybe_execute_ucm_sparse_begin(scheduler_output, attn_metadata)
 
                     hidden_states = self.model(
@@ -1997,7 +1997,7 @@ class NPUModelRunner(LoRAModelRunnerMixin):
 
         if has_ucm_sparse():
             ucm_sparse = get_ucm_sparse()
-            if os.environ["VLLM_HASH_ATTENTION"] == "1":
+            if os.getenv("VLLM_HASH_ATTENTION", "0") == "1":
                 ucm_sparse.initialize_kv_hash_cache_tensors_npu(kv_caches, self.device)
 
         bind_kv_cache(
