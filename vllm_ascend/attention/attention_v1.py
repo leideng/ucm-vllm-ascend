@@ -492,7 +492,7 @@ def unified_ascend_attention_with_output(
                       trace_flag=False)
 
     if attn_metadata is not None:
-        maybe_execute_sparse_attention_finished(query, key, value, output, layer_name, forward_context, k_hash=k_hash)
+        maybe_execute_sparse_attention_finished(query, key, value, output, layer_name, forward_context)
     # maybe_save_kv_layer_to_connector(layer_name, kv_cache)
     return
 
