@@ -289,8 +289,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
             shape = [batch_size * seq_len, num_heads, head_size]
         """
         num_tokens = query.shape[0]
-        use_kv_cache_int8 = kv_cache.numel(
-        ) > 0 and kv_cache[0].dtype == torch.int8
+
+        # In NPU, forward could be called directly, not by unified_ascend_attention_with_output
+        actual_cache = kv_cache[0] if isinstance(kv_cache, tuple) else kv_cache
+        if actual_cache is not None:
+            use_kv_cache_int8 = actual_cache.numel() > 0 and actual_cache.dtype == torch.int8
+        else:
+            use_kv_cache_int8 = False
+        kv_cache = actual_cache 
+
+        #use_kv_cache_int8 = kv_cache.numel(
+        #) > 0 and kv_cache[0].dtype == torch.int8
         if output is None:
             output = torch.empty(num_tokens,
                                  self.num_heads,
@@ -465,11 +474,13 @@ def unified_ascend_attention_with_output(
     attn_metadata = forward_context.attn_metadata
     self = forward_context.no_compile_layers[layer_name]
     kv_cache = self.kv_cache[forward_context.virtual_engine]
+
+    # In NPU, during dummy_run, kv_cache could be a empty tensor, so we need to check the length of kv_cache
+    if os.getenv("VLLM_HASH_ATTENTION", "0") == "1" and len(kv_cache) > 0:
+        kv_cache, k_hash = kv_cache
+    else:
+        k_hash = None
     if attn_metadata is not None:
-        if os.getenv("VLLM_HASH_ATTENTION", "0") == "1":
-            kv_cache, k_hash = kv_cache
-        else:
-            k_hash = None
         maybe_execute_sparse_attention_begin(query, key, value, layer_name, forward_context, output, k_hash=k_hash)
     self.impl.forward(self,
                       query,
