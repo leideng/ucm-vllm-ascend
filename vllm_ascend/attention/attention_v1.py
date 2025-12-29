@@ -37,7 +37,7 @@ from vllm_ascend.utils import (ACL_FORMAT_FRACTAL_NZ, aligned_16, is_310p,
                                nd_to_nz_2d, nd_to_nz_spec)
 
 from ucm.sparse.state import get_ucm_sparse, has_ucm_sparse
-
+import os
 
 class AscendAttentionBackend(AttentionBackend):
     accept_output_buffer: bool = True
@@ -132,8 +132,9 @@ class AscendMetadata:
     # the computed tokens + new tokens None if it is a decoding.
     query_start_loc: torch.Tensor
     query_lens: torch.Tensor
+    query_lens_device: torch.Tensor # (ldeng) added for KVComp
     seq_lens: torch.Tensor
-
+    seq_lens_device: torch.Tensor # (ldeng) added for KVComp
     # max value of number of tokens across dp group
     max_num_tokens_across_dp: int = 0
 
@@ -182,14 +183,21 @@ class AscendAttentionMetadataBuilder:
             block_table[:num_reqs])
 
         query_lens = self.runner.query_lens
+        query_lens_device = query_lens.pin_memory().to(self.runner.device, non_blocking=True)
         seq_lens = self.runner.seq_lens_cpu[:num_reqs]
+        seq_lens_device = seq_lens.pin_memory().to(self.runner.device, non_blocking=True)
         slot_mapping = self.runner.slot_mapping_cpu[:num_actual_tokens].to(
             self.runner.device, non_blocking=True)
         attn_mask = self.runner.attn_mask
         attn_state = self.runner.attn_state
         query_start_loc_cpu = self.runner.query_start_loc_cpu[:num_reqs + 1]
-        query_start_loc = query_start_loc_cpu.to(self.runner.device,
+        query_start_loc = query_start_loc_cpu.pin_memory().to(self.runner.device,
                                                  non_blocking=True)
+
+        if has_ucm_sparse():
+            ucm_sparse = get_ucm_sparse()
+            if os.getenv("VLLM_HASH_ATTENTION", "0") == "1":
+                ucm_sparse.build_decode_attention_meta_npu(query_lens, seq_lens, block_table)
 
         if is_310p():
             if attn_state == AscendAttentionState.PrefillNoCache:
@@ -206,7 +214,9 @@ class AscendAttentionMetadataBuilder:
             block_tables=block_table,
             query_start_loc=query_start_loc,
             query_lens=query_lens,
+            query_lens_device=query_lens_device,
             seq_lens=seq_lens,
+            seq_lens_device=seq_lens_device,
             max_query_len=max_query_len,
             slot_mapping=slot_mapping,
             attn_mask=attn_mask,
@@ -279,8 +289,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
             shape = [batch_size * seq_len, num_heads, head_size]
         """
         num_tokens = query.shape[0]
-        use_kv_cache_int8 = kv_cache.numel(
-        ) > 0 and kv_cache[0].dtype == torch.int8
+
+        # In NPU, forward could be called directly, not by unified_ascend_attention_with_output
+        actual_cache = kv_cache[0] if isinstance(kv_cache, tuple) else kv_cache
+        if actual_cache is not None:
+            use_kv_cache_int8 = actual_cache.numel() > 0 and actual_cache.dtype == torch.int8
+        else:
+            use_kv_cache_int8 = False
+        kv_cache = actual_cache 
+
+        #use_kv_cache_int8 = kv_cache.numel(
+        #) > 0 and kv_cache[0].dtype == torch.int8
         if output is None:
             output = torch.empty(num_tokens,
                                  self.num_heads,
@@ -449,14 +468,20 @@ def unified_ascend_attention_with_output(
     output: torch.Tensor,
     layer_name: str,
 ) -> None:
-    wait_for_kv_layer_from_connector(layer_name)
+    # wait_for_kv_layer_from_connector(layer_name)
 
     forward_context: ForwardContext = get_forward_context()
     attn_metadata = forward_context.attn_metadata
     self = forward_context.no_compile_layers[layer_name]
     kv_cache = self.kv_cache[forward_context.virtual_engine]
-    if not self.use_mla:
-        query, _, _, _ = maybe_execute_sparse_attention_begin(query, key, value, layer_name, forward_context)
+
+    # In NPU, during dummy_run, kv_cache could be a empty tensor, so we need to check the length of kv_cache
+    if os.getenv("VLLM_HASH_ATTENTION", "0") == "1" and len(kv_cache) > 0:
+        kv_cache, k_hash = kv_cache
+    else:
+        k_hash = None
+    if attn_metadata is not None:
+        maybe_execute_sparse_attention_begin(query, key, value, layer_name, forward_context, output, k_hash=k_hash)
     self.impl.forward(self,
                       query,
                       key,
@@ -465,9 +490,10 @@ def unified_ascend_attention_with_output(
                       attn_metadata,
                       output,
                       trace_flag=False)
-    if not self.use_mla:
+
+    if attn_metadata is not None:
         maybe_execute_sparse_attention_finished(query, key, value, output, layer_name, forward_context)
-    maybe_save_kv_layer_to_connector(layer_name, kv_cache)
+    # maybe_save_kv_layer_to_connector(layer_name, kv_cache)
     return
 
 def wait_for_kv_layer_from_connector(layer_name: str):
@@ -506,19 +532,20 @@ def maybe_execute_sparse_attention_begin(
         forward_context: ForwardContext,
         output: Optional[torch.Tensor] = None,
         phase: Optional[str] = None,
+        k_hash: Optional[torch.Tensor] = None,
+        decode_ql_nope: Optional[torch.Tensor] = None,
+        decode_q_pe: Optional[torch.Tensor] = None,
 ):
     if not has_ucm_sparse():
-            return query, key, value, output
+        return
 
     ucm_sparse = get_ucm_sparse()
 
     attn_metadata = forward_context.attn_metadata
     if attn_metadata is None:
-        return query, key, value, output
+        return
 
-    return ucm_sparse.attention_begin(
-        query, key, value, layer_name, forward_context, output, phase
-    )
+    ucm_sparse.attention_begin(query, key, value, layer_name, forward_context, output, phase, k_hash, decode_ql_nope, decode_q_pe)
 
 def maybe_execute_sparse_attention_finished(
         query: torch.Tensor,
