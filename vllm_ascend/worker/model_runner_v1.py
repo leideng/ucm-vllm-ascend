@@ -1993,6 +1993,11 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                     # KV cache specs.
                     raise ValueError("Unknown KV cache spec type.")
 
+        if has_ucm_sparse():
+            ucm_sparse = get_ucm_sparse()
+            if os.getenv("VLLM_HASH_ATTENTION", "0") == "1":
+                ucm_sparse.initialize_kv_hash_cache_tensors_npu(kv_caches, self.device)
+
         bind_kv_cache(
             kv_caches,
             self.vllm_config.compilation_config.static_forward_context,
